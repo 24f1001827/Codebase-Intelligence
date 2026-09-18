@@ -40,6 +40,30 @@ with TemporaryDirectory() as temp_dir:
     total_units = indexer.index_repository(str(root))
     print("Units indexed:", total_units)
 
+    collection = indexer.vector_store.client.get_collection(
+        collection_name=indexer.vector_store.collection_name
+    )
+
+    print("\nQDRANT:")
+    print("Point count:", collection.points_count)
+
+    points, _ = indexer.vector_store.client.scroll(
+        collection_name=indexer.vector_store.collection_name,
+        limit=20,
+        with_payload=True,
+        with_vectors=False,
+    )
+
+    print("\nQDRANT POINTS:")
+
+    for point in points:
+        print(
+            "ID:",
+            point.id,
+            "| CodeUnit ID:",
+            point.payload.get("metadata", {}).get("id"),
+        )
+
     with SessionLocal() as session:
         normalized_root = (
             str(root.resolve())
@@ -73,6 +97,21 @@ with TemporaryDirectory() as temp_dir:
             )
 
             records = session.scalars(code_unit_statement).all()
+
+            points, _ = indexer.vector_store.client.scroll(
+                collection_name=indexer.vector_store.collection_name,
+                limit=100,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            repository_points = [
+                point
+                for point in points
+                if point.payload.get("metadata", {})
+                .get("id", "")
+                .startswith(repository.id + ":")
+            ]
 
             print("\nCODE UNITS:")
 
@@ -111,4 +150,9 @@ with TemporaryDirectory() as temp_dir:
             print(
                 "Correct number of units:",
                 len(records) == 4,
+            )
+
+            print(
+                "Correct Qdrant point count:",
+                len(repository_points) == 4,
             )
