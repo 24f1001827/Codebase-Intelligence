@@ -1,7 +1,7 @@
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.database.models import CodeUnitRecord, RepositoryRecord
+from app.database.models import CodeUnitRecord
 from app.models.code import CodeUnit
 
 
@@ -25,7 +25,6 @@ class CodeUnitRepository:
             end_line=code_unit.end_line,
             content=code_unit.content,
         )
-
         self.session.add(record)
         return record
 
@@ -72,6 +71,19 @@ class CodeUnitRepository:
             existing.end_line = unit.end_line
             existing.content = unit.content
 
+    def delete_many(
+        self,
+        code_unit_ids: list[str],
+    ) -> None:
+        if not code_unit_ids:
+            return
+
+        statement = delete(CodeUnitRecord).where(
+            CodeUnitRecord.id.in_(code_unit_ids)
+        )
+
+        self.session.execute(statement)
+
     def get_by_id(
         self,
         code_unit_id: str,
@@ -88,6 +100,18 @@ class CodeUnitRepository:
     ) -> list[CodeUnitRecord]:
         statement = select(CodeUnitRecord).where(
             CodeUnitRecord.repository_id == repository_id
+        )
+
+        return list(self.session.scalars(statement).all())
+
+    def get_by_file(
+        self,
+        repository_id: str,
+        file_path: str,
+    ) -> list[CodeUnitRecord]:
+        statement = select(CodeUnitRecord).where(
+            CodeUnitRecord.repository_id == repository_id,
+            CodeUnitRecord.file_path == file_path,
         )
 
         return list(self.session.scalars(statement).all())

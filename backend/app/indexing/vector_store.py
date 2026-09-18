@@ -12,7 +12,10 @@ QDRANT_PATH = "./qdrant_data"
 
 
 class VectorStore:
-    def __init__(self, collection_name: str = "code_units"):
+    def __init__(
+        self,
+        collection_name: str = "code_units",
+    ):
         self.embeddings = EmbeddingService()
         self.client = QdrantClient(path=QDRANT_PATH)
         self.collection_name = collection_name
@@ -26,7 +29,9 @@ class VectorStore:
         )
 
     def _ensure_collection(self) -> None:
-        if self.client.collection_exists(self.collection_name):
+        if self.client.collection_exists(
+            self.collection_name
+        ):
             return
 
         vector_size = len(
@@ -41,15 +46,24 @@ class VectorStore:
             ),
         )
 
-    def add_documents(self, documents: list[Document]) -> None:
-        """Add or update documents in the vector store."""
+    def _qdrant_id(
+        self,
+        code_unit_id: str,
+    ) -> str:
+        return str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                code_unit_id,
+            )
+        )
 
+    def add_documents(
+        self,
+        documents: list[Document],
+    ) -> None:
         ids = [
-            str(
-                uuid.uuid5(
-                    uuid.NAMESPACE_URL,
-                    document.metadata["id"],
-                )
+            self._qdrant_id(
+                document.metadata["id"]
             )
             for document in documents
         ]
@@ -57,6 +71,22 @@ class VectorStore:
         self.store.add_documents(
             documents,
             ids=ids,
+        )
+
+    def delete_documents(
+        self,
+        code_unit_ids: list[str],
+    ) -> None:
+        if not code_unit_ids:
+            return
+
+        qdrant_ids = [
+            self._qdrant_id(code_unit_id)
+            for code_unit_id in code_unit_ids
+        ]
+
+        self.store.delete(
+            ids=qdrant_ids,
         )
 
     def similarity_search(
