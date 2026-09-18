@@ -22,12 +22,10 @@ class Indexer:
 
     def index_repository(self, repo_path: str) -> int:
         root = Path(repo_path).resolve()
-
         files = discover_files(str(root))
 
         with SessionLocal() as session:
             repository_repository = RepositoryRepository(session)
-
             repository = repository_repository.get_or_create_local(
                 str(root)
             )
@@ -35,6 +33,37 @@ class Indexer:
             code_unit_repository = CodeUnitRepository(session)
 
             total_units = 0
+
+            # ---------------------------------------------------------
+            # Remove code units belonging to files that no longer exist
+            # ---------------------------------------------------------
+
+            discovered_file_paths = {
+                str(file_path.relative_to(root))
+                for file_path in files
+            }
+
+            existing_repository_units = (
+                code_unit_repository.get_by_repository(
+                    repository.id
+                )
+            )
+
+            stale_file_ids = [
+                unit.id
+                for unit in existing_repository_units
+                if unit.file_path not in discovered_file_paths
+            ]
+
+            code_unit_repository.delete_many(stale_file_ids)
+
+            self.vector_store.delete_documents(
+                stale_file_ids
+            )
+
+            # ---------------------------------------------------------
+            # Process discovered files
+            # ---------------------------------------------------------
 
             for file_path in files:
                 language = detect_language(str(file_path))
@@ -47,7 +76,9 @@ class Indexer:
                 if parser is None:
                     continue
 
-                source = file_path.read_text(encoding="utf-8")
+                source = file_path.read_text(
+                    encoding="utf-8"
+                )
 
                 relative_path = str(
                     file_path.relative_to(root)
@@ -59,17 +90,54 @@ class Indexer:
                     repository=repository.id,
                 )
 
-                if not units:
-                    continue
+                # -----------------------------------------------------
+                # Remove stale code units from files that still exist
+                # -----------------------------------------------------
 
-                code_unit_repository.upsert_many(
-                    units,
-                    repository_id=repository.id,
+                existing_units = (
+                    code_unit_repository.get_by_file(
+                        repository_id=repository.id,
+                        file_path=relative_path,
+                    )
                 )
 
-                documents = code_units_to_documents(units)
+                existing_ids = {
+                    unit.id
+                    for unit in existing_units
+                }
 
-                self.vector_store.add_documents(documents)
+                new_ids = {
+                    unit.id
+                    for unit in units
+                }
+
+                stale_ids = existing_ids - new_ids
+
+                code_unit_repository.delete_many(
+                    list(stale_ids)
+                )
+
+                self.vector_store.delete_documents(
+                    list(stale_ids)
+                )
+
+                # -----------------------------------------------------
+                # Add/update current code units
+                # -----------------------------------------------------
+
+                if units:
+                    code_unit_repository.upsert_many(
+                        units,
+                        repository_id=repository.id,
+                    )
+
+                    documents = code_units_to_documents(
+                        units
+                    )
+
+                    self.vector_store.add_documents(
+                        documents
+                    )
 
                 total_units += len(units)
 

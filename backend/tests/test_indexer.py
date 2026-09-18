@@ -24,11 +24,28 @@ def authenticate(username, password):
 """
 
 
+SOURCE_WITHOUT_DELETE = """
+class UserService:
+
+    def create_user(self, user):
+        validate_user(user)
+        return save_user(user)
+
+
+def authenticate(username, password):
+    return check_credentials(username, password)
+"""
+
+
 with TemporaryDirectory() as temp_dir:
     root = Path(temp_dir)
 
     source_file = root / "user_service.py"
-    source_file.write_text(SOURCE, encoding="utf-8")
+
+    source_file.write_text(
+        SOURCE,
+        encoding="utf-8",
+    )
 
     indexer = Indexer()
 
@@ -36,20 +53,43 @@ with TemporaryDirectory() as temp_dir:
     total_units = indexer.index_repository(str(root))
     print("Units indexed:", total_units)
 
-    print("\nSecond indexing:")
+    # -------------------------------------------------------------
+    # Test 1: remove a symbol from an existing file
+    # -------------------------------------------------------------
+
+    source_file.write_text(
+        SOURCE_WITHOUT_DELETE,
+        encoding="utf-8",
+    )
+
+    print("\nSecond indexing - delete_user removed:")
     total_units = indexer.index_repository(str(root))
     print("Units indexed:", total_units)
 
+    # -------------------------------------------------------------
+    # Test 2: delete the entire file
+    # -------------------------------------------------------------
+
+    source_file.unlink()
+
+    print("\nThird indexing - entire file deleted:")
+    total_units = indexer.index_repository(str(root))
+    print("Units indexed:", total_units)
+
+    # -------------------------------------------------------------
+    # Inspect Qdrant
+    # -------------------------------------------------------------
+
     collection = indexer.vector_store.client.get_collection(
-        collection_name=indexer.vector_store.collection_name
+        indexer.vector_store.collection_name
     )
 
     print("\nQDRANT:")
-    print("Point count:", collection.points_count)
+    print("Total point count:", collection.points_count)
 
     points, _ = indexer.vector_store.client.scroll(
         collection_name=indexer.vector_store.collection_name,
-        limit=20,
+        limit=100,
         with_payload=True,
         with_vectors=False,
     )
@@ -64,13 +104,16 @@ with TemporaryDirectory() as temp_dir:
             point.payload.get("metadata", {}).get("id"),
         )
 
+    # -------------------------------------------------------------
+    # Inspect PostgreSQL
+    # -------------------------------------------------------------
+
     with SessionLocal() as session:
         normalized_root = (
             str(root.resolve())
             .replace("\\", "/")
             .rstrip("/")
         )
-        repository_id = f"local:{normalized_root}"
 
         print("\nTEST ROOT:")
         print("Raw:", repr(str(root)))
@@ -86,6 +129,7 @@ with TemporaryDirectory() as temp_dir:
 
         if repository is None:
             print("Repository was NOT found.")
+
         else:
             print("ID:", repository.id)
             print("Name:", repository.name)
@@ -96,14 +140,9 @@ with TemporaryDirectory() as temp_dir:
                 CodeUnitRecord.repository_id == repository.id
             )
 
-            records = session.scalars(code_unit_statement).all()
-
-            points, _ = indexer.vector_store.client.scroll(
-                collection_name=indexer.vector_store.collection_name,
-                limit=100,
-                with_payload=True,
-                with_vectors=False,
-            )
+            records = session.scalars(
+                code_unit_statement
+            ).all()
 
             repository_points = [
                 point
@@ -148,11 +187,11 @@ with TemporaryDirectory() as temp_dir:
             )
 
             print(
-                "Correct number of units:",
-                len(records) == 4,
+                "All file units removed from PostgreSQL:",
+                len(records) == 0,
             )
 
             print(
-                "Correct Qdrant point count:",
-                len(repository_points) == 4,
+                "All file units removed from Qdrant:",
+                len(repository_points) == 0,
             )
